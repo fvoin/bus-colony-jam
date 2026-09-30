@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover">
+    <title>Bus Colony Jam</title>
+    <link rel="icon" href="data:,"><!-- no favicon request: a 404 would be a console error on a plain static host -->
+    <!--
+      The canvas fills the whole browser window and never scrolls (art review QA-2 n1, m6). The game keeps its 9:16
+      column itself (ui.md §2): the camera frames the board by height, the HUD, the Undo and the windows sit in the
+      column (columnRect); the road, the lawn with its bushes and the BottomShade run over the whole width — the same
+      picture as in the editor. Phones (narrower than 9:16): the column is the whole window (criteria F8).
+    -->
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #8fd15a; } /* the lawn (Palette.Background) while loading */
+      body { position: fixed; inset: 0; touch-action: none; -webkit-user-select: none; user-select: none; }
+      #unity-canvas { position: absolute; top: 0; left: 0; display: block;
+                      height: 100%; width: 100%; background: #231F20; outline: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <script src="Build/webgl-new.loader.js"></script>
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+
+      // P7: at start-up the engine asks WebGL2 for the MSAA sample counts of the SNORM formats (R8/RG8/RGBA8/R16/RG16/
+      // RGBA16_SNORM), which WebGL2 never renders to without EXT_render_snorm: every such call printed
+      // "WebGL: INVALID_ENUM: getInternalformatParameter: invalid internalformat". Answer "no sample counts" for them
+      // without the invalid call (the same result the engine gets from the failed one); every other query is untouched.
+      (function () {
+        if (!window.WebGL2RenderingContext) return;
+        var proto = WebGL2RenderingContext.prototype, query = proto.getInternalformatParameter;
+        proto.getInternalformatParameter = function (target, internalformat, pname) {
+          if (internalformat >= 0x8F94 && internalformat <= 0x8F9B) return new Int32Array(0);
+          return query.call(this, target, internalformat, pname);
+        };
+      })();
+      function fitFrame() {
+        // the whole visible window (visualViewport: the part not under the phone's keyboard / browser bars)
+        var vv = window.visualViewport;
+        var w = Math.floor(vv ? vv.width : window.innerWidth);
+        var h = Math.floor(vv ? vv.height : window.innerHeight);
+        if (w <= 0 || h <= 0) return;
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
+      }
+      fitFrame();
+      window.addEventListener("resize", fitFrame);
+      window.addEventListener("orientationchange", fitFrame);
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", fitFrame);
+
+      createUnityInstance(canvas, {
+        arguments: [],
+        dataUrl: "Build/webgl-new.data.unityweb",
+        frameworkUrl: "Build/webgl-new.framework.js.unityweb",
+        codeUrl: "Build/webgl-new.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        // Unity 6: PlayerPrefs.Save() (settings, progress) syncs IndexedDB by itself; without this the first save printed
+        // "Manual synchronization of Unity Application.persistentDataPath via JS_FileSystem_Sync() is deprecated"
+        autoSyncPersistentDataPath: true,
+        companyName: "Findlab",
+        productName: "Bus Colony Jam",
+        productVersion: "0.1.0",
+        // render at most at 2x: a 3x phone would draw 2.25x the pixels for no visible gain
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      }).then(function (unityInstance) {
+        fitFrame();
+        // P7: the GameProbe test contract on the page (BusColony.WebProbe + Plugins/WebGL/BusProbe.jslib), synchronous:
+        // __bus.ready(), __bus.state() — the StateJson object, __bus.act(action, payload) — lastAct
+        window.__bus = {
+          ready: function () { unityInstance.SendMessage("WebProbe", "Pull", ""); return window.__busReady === true; },
+          state: function () { unityInstance.SendMessage("WebProbe", "Pull", ""); return JSON.parse(window.__busState || "{}"); },
+          act: function (action, payload) {
+            var p = payload == null ? null : (typeof payload === "string" ? payload : JSON.stringify(payload));
+            window.__busLastAct = "";
+            unityInstance.SendMessage("WebProbe", "Act", JSON.stringify({ action: action, payload: p }));
+            return window.__busLastAct;
+          },
+        };
+      }).catch(function (message) {
+        console.error(message);
+      });
+    </script>
+  </body>
+</html>
